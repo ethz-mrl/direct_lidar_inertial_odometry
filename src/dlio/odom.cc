@@ -253,6 +253,7 @@ void dlio::OdomNode::getParams() {
   this->extrinsics.baselink2lidar_T.block(0, 0, 3, 3) = this->extrinsics.baselink2lidar.R;
 
   // IMU
+  dlio::declare_param(this, "odom/imu/normalized", this->imu_normalized_, false);
   dlio::declare_param(this, "odom/imu/calibration/accel", this->calibrate_accel_, true);
   dlio::declare_param(this, "odom/imu/calibration/gyro", this->calibrate_gyro_, true);
   dlio::declare_param(this, "odom/imu/calibration/time", this->imu_calib_time_, 3.0);
@@ -859,6 +860,12 @@ void dlio::OdomNode::callbackPointCloud(const sensor_msgs::msg::PointCloud2::Sha
 void dlio::OdomNode::callbackImu(const sensor_msgs::msg::Imu::SharedPtr imu_raw) {
 
   this->first_imu_received = true;
+
+  if (this->imu_normalized_) {
+    imu_raw->linear_acceleration.x *= this->gravity_;
+    imu_raw->linear_acceleration.y *= this->gravity_;
+    imu_raw->linear_acceleration.z *= this->gravity_;
+  }
 
   sensor_msgs::msg::Imu::SharedPtr imu = this->transformImu( imu_raw );
   this->imu_stamp = imu->header.stamp;

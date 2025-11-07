@@ -339,6 +339,7 @@ private:
   bool vf_use_;
   double vf_res_;
 
+  bool imu_normalized_;
   bool imu_calibrate_;
   bool calibrate_gyro_;
   bool calibrate_accel_;
