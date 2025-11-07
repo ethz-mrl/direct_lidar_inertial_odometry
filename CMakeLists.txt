@@ -10,8 +10,11 @@
 #                                                         #
 ###########################################################
 
-cmake_minimum_required(VERSION 3.12.4)
+cmake_minimum_required(VERSION 3.24)
 project(direct_lidar_inertial_odometry)
+
+set(CMAKE_POLICY_DEFAULT_CMP0144 NEW)
+
 find_package(rosidl_default_generators REQUIRED)
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
