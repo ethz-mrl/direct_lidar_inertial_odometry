@@ -12,11 +12,16 @@
 
 /**:
   ros__parameters:
+    # baselink corresponds to root of your robot and lio is where dlio estiamtes odometry
+    # If your base link is on the same rigid body as the lidar and imu, then you can use the extrinsics to directly
+    # get odometry at the base link. If baselink and lio frames are set equal, then only the odometry in lio frame will
+    # be published. In cases where the baselink is not on the same rigid body, you can set the lio frame to a specific
+    # link of the robot and dlio then uses tf2 lookup to get the transform from the odom frame to the base link.
     use_sim_time: true
     frames/odom: odom
     frames/baselink: base_link
-    frames/lidar: lidar
-    frames/imu: imu
+    frames/lio: lio_link
+
 
     map/waitUntilMove: true
     map/dense/filtered: false

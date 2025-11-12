@@ -17,6 +17,9 @@
 
 #include "rclcpp/qos.hpp"
 
+
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+
 dlio::OdomNode::OdomNode() : Node("dlio_odom_node") {
 
   this->getParams();
@@ -51,6 +54,8 @@ dlio::OdomNode::OdomNode() : Node("dlio_odom_node") {
   this->deskewed_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("deskewed", 1);
 
   this->br = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
+  this ->tf_buffer = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+  this->tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer);
 
   this->publish_timer = this->create_wall_timer(std::chrono::duration<double>(0.01), 
       std::bind(&dlio::OdomNode::publishPose, this));
@@ -185,8 +190,7 @@ void dlio::OdomNode::getParams() {
   // Frames
   dlio::declare_param(this, "frames/odom", this->odom_frame, "odom");
   dlio::declare_param(this, "frames/baselink", this->baselink_frame, "base_link");
-  dlio::declare_param(this, "frames/lidar", this->lidar_frame, "lidar");
-  dlio::declare_param(this, "frames/imu", this->imu_frame, "imu");
+  dlio::declare_param(this, "frames/lio", this->lio_frame, "lio_link");
 
   // Deskew Flag
   dlio::declare_param(this, "pointcloud/deskew", this->deskew_, true);
@@ -227,30 +231,30 @@ void dlio::OdomNode::getParams() {
   std::vector<double> R_default{1., 0., 0., 0., 1., 0., 0., 0., 1.};
 
   // center of gravity to imu
-  std::vector<double> baselink2imu_t, baselink2imu_R;
-  dlio::declare_param(this, "extrinsics/baselink2imu/t", baselink2imu_t, t_default);
-  dlio::declare_param(this, "extrinsics/baselink2imu/R", baselink2imu_R, R_default);
-  this->extrinsics.baselink2imu.t =
-    Eigen::Vector3f(baselink2imu_t[0], baselink2imu_t[1], baselink2imu_t[2]);
-  this->extrinsics.baselink2imu.R =
-    Eigen::Map<const Eigen::Matrix<float, -1, -1, Eigen::RowMajor>>(std::vector<float>(baselink2imu_R.begin(), baselink2imu_R.end()).data(), 3, 3);
-  this->extrinsics.baselink2imu_T = Eigen::Matrix4f::Identity();
-  this->extrinsics.baselink2imu_T.block(0, 3, 3, 1) = this->extrinsics.baselink2imu.t;
-  this->extrinsics.baselink2imu_T.block(0, 0, 3, 3) = this->extrinsics.baselink2imu.R;
+  std::vector<double> lio2imu_t, lio2imu_R;
+  dlio::declare_param(this, "extrinsics/lio2imu/t", lio2imu_t, t_default);
+  dlio::declare_param(this, "extrinsics/lio2imu/R", lio2imu_R, R_default);
+  this->extrinsics.lio2imu.t =
+    Eigen::Vector3f(lio2imu_t[0], lio2imu_t[1], lio2imu_t[2]);
+  this->extrinsics.lio2imu.R =
+    Eigen::Map<const Eigen::Matrix<float, -1, -1, Eigen::RowMajor>>(std::vector<float>(lio2imu_R.begin(), lio2imu_R.end()).data(), 3, 3);
+  this->extrinsics.lio2imu_T = Eigen::Matrix4f::Identity();
+  this->extrinsics.lio2imu_T.block(0, 3, 3, 1) = this->extrinsics.lio2imu.t;
+  this->extrinsics.lio2imu_T.block(0, 0, 3, 3) = this->extrinsics.lio2imu.R;
 
   // center of gravity to lidar
-  std::vector<double> baselink2lidar_t, baselink2lidar_R;
-  dlio::declare_param(this, "extrinsics/baselink2lidar/t", baselink2lidar_t, t_default);
-  dlio::declare_param(this, "extrinsics/baselink2lidar/R", baselink2lidar_R, R_default);
+  std::vector<double> lio2lidar_t, lio2lidar_R;
+  dlio::declare_param(this, "extrinsics/lio2lidar/t", lio2lidar_t, t_default);
+  dlio::declare_param(this, "extrinsics/lio2lidar/R", lio2lidar_R, R_default);
 
-  this->extrinsics.baselink2lidar.t =
-    Eigen::Vector3f(baselink2lidar_t[0], baselink2lidar_t[1], baselink2lidar_t[2]);
-  this->extrinsics.baselink2lidar.R =
-    Eigen::Map<const Eigen::Matrix<float, -1, -1, Eigen::RowMajor>>(std::vector<float>(baselink2lidar_R.begin(), baselink2lidar_R.end()).data(), 3, 3);
+  this->extrinsics.lio2lidar.t =
+    Eigen::Vector3f(lio2lidar_t[0], lio2lidar_t[1], lio2lidar_t[2]);
+  this->extrinsics.lio2lidar.R =
+    Eigen::Map<const Eigen::Matrix<float, -1, -1, Eigen::RowMajor>>(std::vector<float>(lio2lidar_R.begin(), lio2lidar_R.end()).data(), 3, 3);
 
-  this->extrinsics.baselink2lidar_T = Eigen::Matrix4f::Identity();
-  this->extrinsics.baselink2lidar_T.block(0, 3, 3, 1) = this->extrinsics.baselink2lidar.t;
-  this->extrinsics.baselink2lidar_T.block(0, 0, 3, 3) = this->extrinsics.baselink2lidar.R;
+  this->extrinsics.lio2lidar_T = Eigen::Matrix4f::Identity();
+  this->extrinsics.lio2lidar_T.block(0, 3, 3, 1) = this->extrinsics.lio2lidar.t;
+  this->extrinsics.lio2lidar_T.block(0, 0, 3, 3) = this->extrinsics.lio2lidar.R;
 
   // IMU
   dlio::declare_param(this, "odom/imu/normalized", this->imu_normalized_, false);
@@ -305,6 +309,8 @@ void dlio::OdomNode::getParams() {
   dlio::declare_param(this, "odom/geo/Kgb", this->geo_Kgb_, 1.0);
   dlio::declare_param(this, "odom/geo/abias_max", this->geo_abias_max_, 1.0);
   dlio::declare_param(this, "odom/geo/gbias_max", this->geo_gbias_max_, 1.0);
+
+  dlio::declare_param(this, "debug", this->debug_, false);
 }
 
 void dlio::OdomNode::start() {
@@ -323,7 +329,7 @@ void dlio::OdomNode::publishPose() {
   // nav_msgs::msg::Odometry
   this->odom_ros.header.stamp = this->imu_stamp;
   this->odom_ros.header.frame_id = this->odom_frame;
-  this->odom_ros.child_frame_id = this->baselink_frame;
+  this->odom_ros.child_frame_id = this->lio_frame;
 
   this->odom_ros.pose.pose.position.x = this->state.p[0];
   this->odom_ros.pose.pose.position.y = this->state.p[1];
@@ -382,58 +388,41 @@ void dlio::OdomNode::publishToROS(pcl::PointCloud<PointType>::ConstPtr published
   this->path_ros.poses.push_back(p);
   this->path_pub->publish(this->path_ros);
 
-  // transform: odom to baselink
+  // transform: odom to lio
   geometry_msgs::msg::TransformStamped transformStamped;
-
   transformStamped.header.stamp = this->imu_stamp;
   transformStamped.header.frame_id = this->odom_frame;
   transformStamped.child_frame_id = this->baselink_frame;
 
-  transformStamped.transform.translation.x = this->state.p[0];
-  transformStamped.transform.translation.y = this->state.p[1];
-  transformStamped.transform.translation.z = this->state.p[2];
+  if ( this->lio_frame == this->baselink_frame) {
+    transformStamped.transform.translation.x = this->state.p[0];
+    transformStamped.transform.translation.y = this->state.p[1];
+    transformStamped.transform.translation.z = this->state.p[2];
 
-  transformStamped.transform.rotation.w = this->state.q.w();
-  transformStamped.transform.rotation.x = this->state.q.x();
-  transformStamped.transform.rotation.y = this->state.q.y();
-  transformStamped.transform.rotation.z = this->state.q.z();
+    transformStamped.transform.rotation.w = this->state.q.w();
+    transformStamped.transform.rotation.x = this->state.q.x();
+    transformStamped.transform.rotation.y = this->state.q.y();
+    transformStamped.transform.rotation.z = this->state.q.z();
+  }
+  else {
+    tf2::Transform odom_to_lio;
+    const auto& pose = p.pose.position;
+    const auto& quat = p.pose.orientation;
 
-  br->sendTransform(transformStamped);
+    tf2::Quaternion rot(quat.x, quat.y, quat.z, quat.w);
+    odom_to_lio.setOrigin(tf2::Vector3(pose.x, pose.y, pose.z));
+    odom_to_lio.setRotation(rot);
 
-  // transform: baselink to imu
-  transformStamped.header.stamp = this->imu_stamp;
-  transformStamped.header.frame_id = this->baselink_frame;
-  transformStamped.child_frame_id = this->imu_frame;
+    geometry_msgs::msg::TransformStamped t_lio_to_baselink =
+        tf_buffer->lookupTransform(this->lio_frame, this->baselink_frame, tf2::TimePointZero);
+    tf2::Transform lio_to_baselink;
+    tf2::fromMsg(t_lio_to_baselink.transform, lio_to_baselink);
+    tf2::Transform odom_to_baselink = odom_to_lio * lio_to_baselink;
 
-  transformStamped.transform.translation.x = this->extrinsics.baselink2imu.t[0];
-  transformStamped.transform.translation.y = this->extrinsics.baselink2imu.t[1];
-  transformStamped.transform.translation.z = this->extrinsics.baselink2imu.t[2];
-
-  Eigen::Quaternionf q(this->extrinsics.baselink2imu.R);
-  transformStamped.transform.rotation.w = q.w();
-  transformStamped.transform.rotation.x = q.x();
-  transformStamped.transform.rotation.y = q.y();
-  transformStamped.transform.rotation.z = q.z();
-
-  br->sendTransform(transformStamped);
-
-  // transform: baselink to lidar
-  transformStamped.header.stamp = this->imu_stamp;
-  transformStamped.header.frame_id = this->baselink_frame;
-  transformStamped.child_frame_id = this->lidar_frame;
-
-  transformStamped.transform.translation.x = this->extrinsics.baselink2lidar.t[0];
-  transformStamped.transform.translation.y = this->extrinsics.baselink2lidar.t[1];
-  transformStamped.transform.translation.z = this->extrinsics.baselink2lidar.t[2];
-
-  Eigen::Quaternionf qq(this->extrinsics.baselink2lidar.R);
-  transformStamped.transform.rotation.w = qq.w();
-  transformStamped.transform.rotation.x = qq.x();
-  transformStamped.transform.rotation.y = qq.y();
-  transformStamped.transform.rotation.z = qq.z();
+    transformStamped.transform = tf2::toMsg(odom_to_baselink);
+  }
 
   br->sendTransform(transformStamped);
-
 }
 
 void dlio::OdomNode::publishCloud(pcl::PointCloud<PointType>::ConstPtr published_cloud, Eigen::Matrix4f T_cloud) {
@@ -575,7 +564,7 @@ void dlio::OdomNode::preprocessPoints() {
 
     pcl::PointCloud<PointType>::Ptr deskewed_scan_ = std::make_shared<pcl::PointCloud<PointType>>();
     pcl::transformPointCloud (*this->original_scan, *deskewed_scan_,
-                              this->T_prior * this->extrinsics.baselink2lidar_T);
+                              this->T_prior * this->extrinsics.lio2lidar_T);
     this->deskewed_scan = deskewed_scan_;
     this->deskew_status = false;
   }
@@ -681,7 +670,7 @@ void dlio::OdomNode::deskewPointcloud() {
 
     this->first_valid_scan = true;
     this->T_prior = this->T; // assume no motion for the first scan
-    pcl::transformPointCloud (*deskewed_scan_, *deskewed_scan_, this->T_prior * this->extrinsics.baselink2lidar_T);
+    pcl::transformPointCloud (*deskewed_scan_, *deskewed_scan_, this->T_prior * this->extrinsics.lio2lidar_T);
     this->deskewed_scan = deskewed_scan_;
     this->deskew_status = true;
     return;
@@ -699,7 +688,7 @@ void dlio::OdomNode::deskewPointcloud() {
     RCLCPP_FATAL(this->get_logger(),"Bad time sync between LiDAR and IMU!");
 
     this->T_prior = this->T;
-    pcl::transformPointCloud (*deskewed_scan_, *deskewed_scan_, this->T_prior * this->extrinsics.baselink2lidar_T);
+    pcl::transformPointCloud (*deskewed_scan_, *deskewed_scan_, this->T_prior * this->extrinsics.lio2lidar_T);
     this->deskewed_scan = deskewed_scan_;
     this->deskew_status = false;
     return;
@@ -711,7 +700,7 @@ void dlio::OdomNode::deskewPointcloud() {
 #pragma omp parallel for num_threads(this->num_threads_)
   for (int i = 0; i < timestamps.size(); i++) {
 
-    Eigen::Matrix4f T = frames[i] * this->extrinsics.baselink2lidar_T;
+    Eigen::Matrix4f T = frames[i] * this->extrinsics.lio2lidar_T;
 
     // transform point to world frame
     for (int k = unique_time_indices[i]; k < unique_time_indices[i+1]; k++) {
@@ -850,8 +839,10 @@ void dlio::OdomNode::callbackPointCloud(const sensor_msgs::msg::PointCloud2::Sha
   this->gicp_hasConverged = this->gicp.hasConverged();
 
   // Debug statements and publish custom DLIO message
-  this->debug_thread = std::thread( &dlio::OdomNode::debug, this );
-  this->debug_thread.detach();
+  if (this->debug_) {
+    this->debug_thread = std::thread( &dlio::OdomNode::debug, this );
+    this->debug_thread.detach();
+  }
 
   this->geo.first_opt_done = true;
 
@@ -1390,7 +1381,7 @@ sensor_msgs::msg::Imu::SharedPtr dlio::OdomNode::transformImu(const sensor_msgs:
                           imu_raw->angular_velocity.y,
                           imu_raw->angular_velocity.z);
 
-  Eigen::Vector3f ang_vel_cg = this->extrinsics.baselink2imu.R * ang_vel;
+  Eigen::Vector3f ang_vel_cg = this->extrinsics.lio2imu.R * ang_vel;
 
   imu->angular_velocity.x = ang_vel_cg[0];
   imu->angular_velocity.y = ang_vel_cg[1];
@@ -1403,11 +1394,11 @@ sensor_msgs::msg::Imu::SharedPtr dlio::OdomNode::transformImu(const sensor_msgs:
                             imu_raw->linear_acceleration.y,
                             imu_raw->linear_acceleration.z);
 
-  Eigen::Vector3f lin_accel_cg = this->extrinsics.baselink2imu.R * lin_accel;
+  Eigen::Vector3f lin_accel_cg = this->extrinsics.lio2imu.R * lin_accel;
 
   lin_accel_cg = lin_accel_cg
-                 + ((ang_vel_cg - ang_vel_cg_prev) / dt).cross(-this->extrinsics.baselink2imu.t)
-                 + ang_vel_cg.cross(ang_vel_cg.cross(-this->extrinsics.baselink2imu.t));
+                 + ((ang_vel_cg - ang_vel_cg_prev) / dt).cross(-this->extrinsics.lio2imu.t)
+                 + ang_vel_cg.cross(ang_vel_cg.cross(-this->extrinsics.lio2imu.t));
 
   ang_vel_cg_prev = ang_vel_cg;
 
