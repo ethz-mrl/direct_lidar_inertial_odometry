@@ -17,7 +17,6 @@
 
 #include "rclcpp/qos.hpp"
 
-
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
 dlio::OdomNode::OdomNode() : Node("dlio_odom_node") {
@@ -367,25 +366,29 @@ void dlio::OdomNode::publishPose() {
 
 }
 
-void dlio::OdomNode::publishToROS(pcl::PointCloud<PointType>::ConstPtr published_cloud, Eigen::Matrix4f T_cloud) {
+void dlio::OdomNode::publishToROS(pcl::PointCloud<PointType>::ConstPtr published_cloud, Eigen::Matrix4f T_cloud,
+                                  const builtin_interfaces::msg::Time stamp, const State state ) {
   this->publishCloud(published_cloud, T_cloud);
 
   // nav_msgs::msg::Path
-  this->path_ros.header.stamp = this->imu_stamp;
+  this->path_ros.header.stamp = stamp;
   this->path_ros.header.frame_id = this->odom_frame;
 
   geometry_msgs::msg::PoseStamped p;
   p.header.stamp = this->imu_stamp;
   p.header.frame_id = this->odom_frame;
-  p.pose.position.x = this->state.p[0];
-  p.pose.position.y = this->state.p[1];
-  p.pose.position.z = this->state.p[2];
-  p.pose.orientation.w = this->state.q.w();
-  p.pose.orientation.x = this->state.q.x();
-  p.pose.orientation.y = this->state.q.y();
-  p.pose.orientation.z = this->state.q.z();
+  p.pose.position.x = state.p[0];
+  p.pose.position.y = state.p[1];
+  p.pose.position.z = state.p[2];
+  p.pose.orientation.w = state.q.w();
+  p.pose.orientation.x = state.q.x();
+  p.pose.orientation.y = state.q.y();
+  p.pose.orientation.z = state.q.z();
 
   this->path_ros.poses.push_back(p);
+  if (this->path_ros.poses.size() > 1000) {
+    this->path_ros.poses.erase(this->path_ros.poses.begin());
+  }
   this->path_pub->publish(this->path_ros);
 
   // transform: odom to lio
@@ -395,14 +398,14 @@ void dlio::OdomNode::publishToROS(pcl::PointCloud<PointType>::ConstPtr published
   transformStamped.child_frame_id = this->baselink_frame;
 
   if ( this->lio_frame == this->baselink_frame) {
-    transformStamped.transform.translation.x = this->state.p[0];
-    transformStamped.transform.translation.y = this->state.p[1];
-    transformStamped.transform.translation.z = this->state.p[2];
+    transformStamped.transform.translation.x = state.p[0];
+    transformStamped.transform.translation.y = state.p[1];
+    transformStamped.transform.translation.z = state.p[2];
 
-    transformStamped.transform.rotation.w = this->state.q.w();
-    transformStamped.transform.rotation.x = this->state.q.x();
-    transformStamped.transform.rotation.y = this->state.q.y();
-    transformStamped.transform.rotation.z = this->state.q.z();
+    transformStamped.transform.rotation.w = state.q.w();
+    transformStamped.transform.rotation.x = state.q.x();
+    transformStamped.transform.rotation.y = state.q.y();
+    transformStamped.transform.rotation.z = state.q.z();
   }
   else {
     tf2::Transform odom_to_lio;
@@ -831,8 +834,9 @@ void dlio::OdomNode::callbackPointCloud(const sensor_msgs::msg::PointCloud2::Sha
   } else {
     published_cloud = this->deskewed_scan;
   }
-  this->publish_thread = std::thread( &dlio::OdomNode::publishToROS, this, published_cloud, this->T_corr );
-  this->publish_thread.detach();
+  this->publishToROS(published_cloud, this->T_corr, this->imu_stamp, this->state);
+  // this->publish_thread = std::thread( &dlio::OdomNode::publishToROS, this, published_cloud, this->T_corr, this->imu_stamp, this->state);
+  // this->publish_thread.detach();
 
   // Update some statistics
   this->comp_times.push_back(this->now().seconds() - then);
@@ -1420,7 +1424,7 @@ void dlio::OdomNode::computeSpaciousness() {
   // compute range of points
   std::vector<float> ds;
 
-  for (int i = 0; i <= this->original_scan->points.size(); i++) {
+  for (int i = 0; i < this->original_scan->points.size(); i++) {
     float d = std::sqrt(pow(this->original_scan->points[i].x, 2) +
                         pow(this->original_scan->points[i].y, 2));
     ds.push_back(d);
