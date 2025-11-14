@@ -333,9 +333,9 @@ void dlio::OdomNode::publishPose() {
   this->odom_ros.pose.pose.orientation.y = this->state.q.y();
   this->odom_ros.pose.pose.orientation.z = this->state.q.z();
 
-  this->odom_ros.twist.twist.linear.x = this->state.v.lin.w[0];
-  this->odom_ros.twist.twist.linear.y = this->state.v.lin.w[1];
-  this->odom_ros.twist.twist.linear.z = this->state.v.lin.w[2];
+  this->odom_ros.twist.twist.linear.x = this->state.v.lin.b[0];
+  this->odom_ros.twist.twist.linear.y = this->state.v.lin.b[1];
+  this->odom_ros.twist.twist.linear.z = this->state.v.lin.b[2];
 
   this->odom_ros.twist.twist.angular.x = this->state.v.ang.b[0];
   this->odom_ros.twist.twist.angular.y = this->state.v.ang.b[1];
