@@ -14,13 +14,16 @@
 
 // ROS
 #include "rclcpp/rclcpp.hpp"
-#include <nav_msgs/msg/odometry.hpp>
+#include <builtin_interfaces/msg/time.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/pose_array.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/buffer.h>
+#include "tf2_ros/transform_listener.h"
 
 // BOOST
 #include <boost/format.hpp>
@@ -59,7 +62,8 @@ private:
 
   void publishPose();
 
-  void publishToROS(pcl::PointCloud<PointType>::ConstPtr published_cloud, Eigen::Matrix4f T_cloud);
+  void publishToROS(pcl::PointCloud<PointType>::ConstPtr published_cloud, Eigen::Matrix4f T_cloud,
+                    const builtin_interfaces::msg::Time stamp, const State state);
   void publishCloud(pcl::PointCloud<PointType>::ConstPtr published_cloud, Eigen::Matrix4f T_cloud);
   void publishKeyframe(std::pair<std::pair<Eigen::Vector3f, Eigen::Quaternionf>,
                        pcl::PointCloud<PointType>::ConstPtr> kf, rclcpp::Time timestamp);
@@ -109,6 +113,7 @@ private:
   void debug();
 
   rclcpp::TimerBase::SharedPtr publish_timer;
+  rclcpp::TimerBase::SharedPtr init_timer;
 
   // Subscribers
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub;
@@ -125,6 +130,8 @@ private:
 
   // TF
   std::shared_ptr<tf2_ros::TransformBroadcaster> br;
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener;
 
   // ROS Msgs
   nav_msgs::msg::Odometry odom_ros;
@@ -166,8 +173,7 @@ private:
   // Frames
   std::string odom_frame;
   std::string baselink_frame;
-  std::string lidar_frame;
-  std::string imu_frame;
+  std::string lio_frame;
 
   // Preprocessing
   pcl::CropBox<PointType> crop;
@@ -228,10 +234,10 @@ private:
       Eigen::Vector3f t;
       Eigen::Matrix3f R;
     };
-    SE3 baselink2imu;
-    SE3 baselink2lidar;
-    Eigen::Matrix4f baselink2imu_T;
-    Eigen::Matrix4f baselink2lidar_T;
+    SE3 lio2imu;
+    SE3 lio2lidar;
+    Eigen::Matrix4f lio2imu_T;
+    Eigen::Matrix4f lio2lidar_T;
   }; Extrinsics extrinsics;
 
   // IMU
@@ -364,4 +370,5 @@ private:
   double geo_abias_max_;
   double geo_gbias_max_;
 
+  bool debug_;
 };
