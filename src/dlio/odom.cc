@@ -13,6 +13,7 @@
 #include "dlio/odom.h"
 #include "dlio/utils.h"
 
+#include <chrono>
 #include <queue>
 
 #include "rclcpp/qos.hpp"
@@ -56,8 +57,10 @@ dlio::OdomNode::OdomNode() : Node("dlio_odom_node") {
   this ->tf_buffer = std::make_shared<tf2_ros::Buffer>(this->get_clock());
   this->tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer);
 
+  // NOTE(@naefjo): Initialize timer stopped. We start the timer later as soon as the tf lookup is available.
   this->publish_timer = this->create_wall_timer(std::chrono::duration<double>(0.01), 
-      std::bind(&dlio::OdomNode::publishPose, this));
+      std::bind(&dlio::OdomNode::publishPose, this),
+      this->get_node_base_interface()->get_default_callback_group(), false);
 
   this->T = Eigen::Matrix4f::Identity();
   this->T_prior = Eigen::Matrix4f::Identity();
@@ -177,6 +180,25 @@ dlio::OdomNode::OdomNode() : Node("dlio_odom_node") {
   }
   fclose(file);
 
+  // NOTE(@naefjo): Wait until desired transform is available. If lio frame and baselink_frame are
+  // equal, we dont need to look up the transform and can skip the check.
+  // We do this in a timer to not block the executor.
+   init_timer = this->create_wall_timer(
+      std::chrono::milliseconds(100),
+      [this]() {
+        if ( this->lio_frame != this->baselink_frame) {
+          try {
+            this->tf_buffer->lookupTransform(lio_frame, baselink_frame, tf2::TimePointZero);
+          } catch (const std::exception &ex) {
+              RCLCPP_DEBUG(this->get_logger(), "Waiting for TF: %s", ex.what());
+              return;
+          }
+        }
+        RCLCPP_DEBUG(this->get_logger(), "Started publish_timer");
+        this->init_timer->cancel();
+        this->publish_timer->reset();
+      }
+  );
 }
 
 dlio::OdomNode::~OdomNode() {}
@@ -364,6 +386,41 @@ void dlio::OdomNode::publishPose() {
 
   this->pose_pub->publish(this->pose_ros);
 
+
+  // transform: odom to lio
+  geometry_msgs::msg::TransformStamped transformStamped;
+  transformStamped.header.stamp = this->imu_stamp;
+  transformStamped.header.frame_id = this->odom_frame;
+  transformStamped.child_frame_id = this->baselink_frame;
+
+  if ( this->lio_frame == this->baselink_frame) {
+    transformStamped.transform.translation.x = this->state.p[0];
+    transformStamped.transform.translation.y = this->state.p[1];
+    transformStamped.transform.translation.z = this->state.p[2];
+
+    transformStamped.transform.rotation.w = this->state.q.w();
+    transformStamped.transform.rotation.x = this->state.q.x();
+    transformStamped.transform.rotation.y = this->state.q.y();
+    transformStamped.transform.rotation.z = this->state.q.z();
+  }
+  else {
+    tf2::Transform odom_to_lio;
+
+    tf2::Quaternion rot(state.q.x(), state.q.y(), state.q.z(), state.q.w());
+    odom_to_lio.setOrigin(tf2::Vector3(state.p[0], state.p[1], state.p[2]));
+    odom_to_lio.setRotation(rot);
+
+    geometry_msgs::msg::TransformStamped t_lio_to_baselink = tf_buffer->lookupTransform(
+          this->lio_frame, this->baselink_frame, tf2::TimePointZero);
+    tf2::Transform lio_to_baselink;
+    tf2::fromMsg(t_lio_to_baselink.transform, lio_to_baselink);
+    tf2::Transform odom_to_baselink = odom_to_lio * lio_to_baselink;
+
+    transformStamped.transform = tf2::toMsg(odom_to_baselink);
+  }
+
+  br->sendTransform(transformStamped);
+
 }
 
 void dlio::OdomNode::publishToROS(pcl::PointCloud<PointType>::ConstPtr published_cloud, Eigen::Matrix4f T_cloud,
@@ -391,41 +448,6 @@ void dlio::OdomNode::publishToROS(pcl::PointCloud<PointType>::ConstPtr published
   }
   this->path_pub->publish(this->path_ros);
 
-  // transform: odom to lio
-  geometry_msgs::msg::TransformStamped transformStamped;
-  transformStamped.header.stamp = this->imu_stamp;
-  transformStamped.header.frame_id = this->odom_frame;
-  transformStamped.child_frame_id = this->baselink_frame;
-
-  if ( this->lio_frame == this->baselink_frame) {
-    transformStamped.transform.translation.x = state.p[0];
-    transformStamped.transform.translation.y = state.p[1];
-    transformStamped.transform.translation.z = state.p[2];
-
-    transformStamped.transform.rotation.w = state.q.w();
-    transformStamped.transform.rotation.x = state.q.x();
-    transformStamped.transform.rotation.y = state.q.y();
-    transformStamped.transform.rotation.z = state.q.z();
-  }
-  else {
-    tf2::Transform odom_to_lio;
-    const auto& pose = p.pose.position;
-    const auto& quat = p.pose.orientation;
-
-    tf2::Quaternion rot(quat.x, quat.y, quat.z, quat.w);
-    odom_to_lio.setOrigin(tf2::Vector3(pose.x, pose.y, pose.z));
-    odom_to_lio.setRotation(rot);
-
-    geometry_msgs::msg::TransformStamped t_lio_to_baselink =
-        tf_buffer->lookupTransform(this->lio_frame, this->baselink_frame, tf2::TimePointZero);
-    tf2::Transform lio_to_baselink;
-    tf2::fromMsg(t_lio_to_baselink.transform, lio_to_baselink);
-    tf2::Transform odom_to_baselink = odom_to_lio * lio_to_baselink;
-
-    transformStamped.transform = tf2::toMsg(odom_to_baselink);
-  }
-
-  br->sendTransform(transformStamped);
 }
 
 void dlio::OdomNode::publishCloud(pcl::PointCloud<PointType>::ConstPtr published_cloud, Eigen::Matrix4f T_cloud) {

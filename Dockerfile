@@ -14,4 +14,4 @@ WORKDIR /root/workspace/src/
 COPY . dlio
 
 WORKDIR /root/workspace/
-
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && colcon build"

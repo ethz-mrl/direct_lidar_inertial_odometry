@@ -63,7 +63,7 @@ private:
   void publishPose();
 
   void publishToROS(pcl::PointCloud<PointType>::ConstPtr published_cloud, Eigen::Matrix4f T_cloud,
-                    builtin_interfaces::msg::Time stamp, State state);
+                    const builtin_interfaces::msg::Time stamp, const State state);
   void publishCloud(pcl::PointCloud<PointType>::ConstPtr published_cloud, Eigen::Matrix4f T_cloud);
   void publishKeyframe(std::pair<std::pair<Eigen::Vector3f, Eigen::Quaternionf>,
                        pcl::PointCloud<PointType>::ConstPtr> kf, rclcpp::Time timestamp);
@@ -113,6 +113,7 @@ private:
   void debug();
 
   rclcpp::TimerBase::SharedPtr publish_timer;
+  rclcpp::TimerBase::SharedPtr init_timer;
 
   // Subscribers
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub;
