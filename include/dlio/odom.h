@@ -152,7 +152,6 @@ private:
   // Threads
   std::thread publish_thread;
   std::thread publish_keyframe_thread;
-  std::thread metrics_thread;
   std::thread debug_thread;
 
   // Trajectory
