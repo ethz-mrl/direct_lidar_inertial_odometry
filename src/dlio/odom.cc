@@ -347,6 +347,8 @@ void dlio::OdomNode::start() {
 
 void dlio::OdomNode::publishPose() {
 
+  if (!this->geo.first_opt_done) { return; }
+
   // nav_msgs::msg::Odometry
   this->odom_ros.header.stamp = this->imu_stamp;
   this->odom_ros.header.frame_id = this->odom_frame;
@@ -361,9 +363,9 @@ void dlio::OdomNode::publishPose() {
   this->odom_ros.pose.pose.orientation.y = this->state.q.y();
   this->odom_ros.pose.pose.orientation.z = this->state.q.z();
 
-  this->odom_ros.twist.twist.linear.x = this->state.v.lin.w[0];
-  this->odom_ros.twist.twist.linear.y = this->state.v.lin.w[1];
-  this->odom_ros.twist.twist.linear.z = this->state.v.lin.w[2];
+  this->odom_ros.twist.twist.linear.x = this->state.v.lin.b[0];
+  this->odom_ros.twist.twist.linear.y = this->state.v.lin.b[1];
+  this->odom_ros.twist.twist.linear.z = this->state.v.lin.b[2];
 
   this->odom_ros.twist.twist.angular.x = this->state.v.ang.b[0];
   this->odom_ros.twist.twist.angular.y = this->state.v.ang.b[1];
@@ -410,8 +412,21 @@ void dlio::OdomNode::publishPose() {
     odom_to_lio.setOrigin(tf2::Vector3(state.p[0], state.p[1], state.p[2]));
     odom_to_lio.setRotation(rot);
 
-    geometry_msgs::msg::TransformStamped t_lio_to_baselink = tf_buffer->lookupTransform(
-          this->lio_frame, this->baselink_frame, tf2::TimePointZero);
+    geometry_msgs::msg::TransformStamped t_lio_to_baselink;
+    try {
+      t_lio_to_baselink = tf_buffer->lookupTransform(this->lio_frame, this->baselink_frame, tf2::TimePointZero);
+    } catch (const tf2::TransformException &ex) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "No %s -> %s TF: %s",
+                           this->lio_frame.c_str(), this->baselink_frame.c_str(), ex.what());
+      return;
+    }
+    // a stale lio -> baselink TF (e.g. the waist joint) puts the base link in the wrong place: skip it
+    double tf_age = (this->now() - rclcpp::Time(t_lio_to_baselink.header.stamp)).seconds();
+    if (tf_age > 0.2) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "%s -> %s TF is %.2f s old, not published",
+                           this->lio_frame.c_str(), this->baselink_frame.c_str(), tf_age);
+      return;
+    }
     tf2::Transform lio_to_baselink;
     tf2::fromMsg(t_lio_to_baselink.transform, lio_to_baselink);
     tf2::Transform odom_to_baselink = odom_to_lio * lio_to_baselink;
@@ -432,7 +447,7 @@ void dlio::OdomNode::publishToROS(pcl::PointCloud<PointType>::ConstPtr published
   this->path_ros.header.frame_id = this->odom_frame;
 
   geometry_msgs::msg::PoseStamped p;
-  p.header.stamp = this->imu_stamp;
+  p.header.stamp = stamp;
   p.header.frame_id = this->odom_frame;
   p.pose.position.x = state.p[0];
   p.pose.position.y = state.p[1];
@@ -802,8 +817,7 @@ void dlio::OdomNode::callbackPointCloud(const sensor_msgs::msg::PointCloud2::Sha
   }
 
   // Compute Metrics
-  this->metrics_thread = std::thread( &dlio::OdomNode::computeMetrics, this );
-  this->metrics_thread.detach();
+  this->computeMetrics();
 
   // Set Adaptive Parameters
   if (this->adaptive_params_) {
@@ -1380,6 +1394,7 @@ void dlio::OdomNode::updateState() {
   this->state.q.y() += dt * this->geo_Kq_ * qcorr.y();
   this->state.q.z() += dt * this->geo_Kq_ * qcorr.z();
   this->state.q.normalize();
+  this->state.v.lin.b = this->state.q.toRotationMatrix().inverse() * this->state.v.lin.w;
 
   // store previous pose, orientation, and velocity
   this->geo.prev_p = this->state.p;
